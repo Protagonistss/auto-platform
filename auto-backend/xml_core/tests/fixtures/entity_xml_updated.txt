@@ -1,0 +1,11 @@
+<entity className="labor.tracking.dao.entity.LtProduct" name="labor.tracking.dao.entity.LtProduct" tableName="lt_product" displayName="商品（更新）" registerShortName="true" createTimeProp="addTime" updateTimeProp="updateTime" deleteFlagProp="deleted" useLogicalDelete="true">
+    <columns>
+        <column name="id" code="ID" propId="1" stdSqlType="INTEGER" stdDataType="int" tagSet="seq" primary="true" mandatory="true" displayName="Id"/>
+        <column name="productName" code="PRODUCT_NAME" propId="2" stdSqlType="VARCHAR" stdDataType="string" precision="255" mandatory="true" tagSet="disp" displayName="商品名称（已更新）"/>
+        <column name="productQuantity" code="PRODUCT_QUANTITY" propId="3" stdSqlType="INTEGER" stdDataType="int" displayName="商品数量"/>
+        <column name="addTime" code="ADD_TIME" propId="4" stdSqlType="DATETIME" stdDataType="datetime" domain="createTime" displayName="创建时间"/>
+        <column name="updateTime" code="UPDATE_TIME" propId="5" stdSqlType="DATETIME" stdDataType="datetime" domain="updateTime" displayName="更新时间"/>
+        <column name="deleted" code="DELETED" propId="6" stdSqlType="BOOLEAN" stdDataType="boolean" domain="delFlag" displayName="逻辑删除"/>
+    </columns>
+    <comment>商品信息（已更新）</comment>
+</entity>

@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<orm xmlns:ext="ext" xmlns:i18n-en="i18n-en" xmlns:ui="ui" xmlns:x="/nop/schema/xdsl.xdef" x:schema="/nop/schema/orm/orm.xdef" x:extends="_app.orm.xml">
+
+  <entities>
+  <entity className="labor.tracking.dao.entity.Product" name="labor.tracking.dao.entity.Product" tableName="lt_product" displayName="商品" registerShortName="true" createTimeProp="addTime" updateTimeProp="updateTime" deleteFlagProp="deleted" useLogicalDelete="true" i18n-en:displayName="Product">
+    <columns>
+        <column name="id" code="ID" propId="1" stdSqlType="INTEGER" stdDataType="int" tagSet="seq" ui:show="R" primary="true" mandatory="true" displayName="Id" i18n-en:displayName="Id"/>
+        <column name="productName" code="PRODUCT_NAME" propId="2" stdSqlType="VARCHAR" stdDataType="string" precision="255" mandatory="true" tagSet="disp" displayName="商品名称" i18n-en:displayName="Product Name"/>
+        <column name="productQuantity" code="PRODUCT_QUANTITY" propId="3" stdSqlType="INTEGER" stdDataType="int" displayName="商品数量" i18n-en:displayName="Product Quantity"/>
+        <column name="productSource" code="PRODUCT_SOURCE" propId="4" stdSqlType="VARCHAR" stdDataType="string" precision="255" ext:dict="product_source" displayName="商品来源" i18n-en:displayName="Product Source"/>
+        <column name="productPrice" code="PRODUCT_PRICE" propId="5" stdSqlType="DECIMAL" stdDataType="decimal" precision="18" scale="2" displayName="商品价格" i18n-en:displayName="Product Price"/>
+        <column name="addTime" code="ADD_TIME" propId="6" stdSqlType="DATETIME" stdDataType="datetime" domain="createTime" displayName="创建时间" i18n-en:displayName="Create Time" ui:show="X"/>
+        <column name="updateTime" code="UPDATE_TIME" propId="7" stdSqlType="DATETIME" stdDataType="datetime" domain="updateTime" displayName="更新时间" i18n-en:displayName="Update Time" ui:show="X"/>
+        <column name="deleted" code="DELETED" propId="8" stdSqlType="BOOLEAN" stdDataType="boolean" domain="delFlag" displayName="逻辑删除" i18n-en:displayName="Deleted" ui:show="X"/>
+    </columns>
+    <comment>商品信息</comment>
+</entity></entities>
+</orm>

@@ -1,0 +1,11 @@
+{
+  "extends": "@ithinku/tsconfig/node.json",
+  "compilerOptions": {
+    "composite": true
+  },
+  "include": [
+    "vite.config.*",
+    "vitest.config.*",
+    "src/**/*.json"
+  ]
+}
