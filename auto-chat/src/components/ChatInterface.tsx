@@ -29,6 +29,7 @@ interface ChatInterfaceProps {
   onBuild?: (xmlContent: string) => void | Promise<void>
   placeholder?: string
   disabled?: boolean
+  initialInput?: string
 }
 
 export function ChatInterface({
@@ -36,11 +37,14 @@ export function ChatInterface({
   onSendMessage,
   onBuild,
   placeholder = '输入消息...',
-  disabled = false
+  disabled = false,
+  initialInput
 }: ChatInterfaceProps) {
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialInput || '')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [isResizing, setIsResizing] = useState(false) // 是否正在调整输入框大小
+  const [textareaSize, setTextareaSize] = useState<{ width?: number; height?: number }>({}) // 输入框尺寸
   const [buildingMessageId, setBuildingMessageId] = useState<string | null>(null)
   const [builtMessageIds, setBuiltMessageIds] = useState<Set<string>>(new Set()) // 已构建的消息
   const [writtenMessageIds, setWrittenMessageIds] = useState<Set<string>>(new Set()) // 已写入的消息
@@ -52,6 +56,7 @@ export function ChatInterface({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const inputAreaRef = useRef<HTMLDivElement>(null)
   const devServerAbortControllersRef = useRef<Record<string, AbortController>>({}) // 存储开发服务器的 AbortController
 
   // 切换思考内容展开状态
@@ -75,6 +80,19 @@ export function ChatInterface({
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // 处理初始输入值（用于 Figma 数据导入）
+  useEffect(() => {
+    if (initialInput !== undefined && initialInput !== input) {
+      setInput(initialInput)
+      // 调整输入框高度
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+        const newHeight = Math.min(textareaRef.current.scrollHeight, 200)
+        textareaRef.current.style.height = `${newHeight}px`
+      }
+    }
+  }, [initialInput])
 
   // 格式化文件大小
   const formatFileSize = (bytes: number): string => {
@@ -161,10 +179,67 @@ export function ChatInterface({
     }
   }
 
+  // 拖拽调整输入区域大小（支持各个方向）
+  const handleResizeStart = (e: React.MouseEvent, direction: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsResizing(true)
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const startWidth = inputAreaRef.current?.offsetWidth || 840
+    const startHeight = inputAreaRef.current?.offsetHeight || 60
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+
+      let newWidth = startWidth
+      let newHeight = startHeight
+
+      // 根据方向计算新的尺寸
+      if (direction.includes('e')) { // 东（右）
+        newWidth = Math.max(400, Math.min(1400, startWidth + deltaX))
+      }
+      if (direction.includes('w')) { // 西（左）
+        newWidth = Math.max(400, Math.min(1400, startWidth - deltaX))
+      }
+      if (direction.includes('s')) { // 南（下）
+        newHeight = Math.max(60, Math.min(800, startHeight + deltaY))
+      }
+      if (direction.includes('n')) { // 北（上）
+        newHeight = Math.max(60, Math.min(800, startHeight - deltaY))
+      }
+
+      setTextareaSize({ width: newWidth, height: newHeight })
+
+      if (inputAreaRef.current) {
+        if (newWidth !== startWidth) {
+          inputAreaRef.current.style.width = `${newWidth}px`
+        }
+        if (newHeight !== startHeight) {
+          inputAreaRef.current.style.height = `${newHeight}px`
+        }
+      }
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
+
   // 自动调整输入框高度
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const textarea = e.target
     setInput(textarea.value)
+
+    // 如果用户设置了固定尺寸（正在调整整个输入区域大小），则不自动调整
+    if (textareaSize.width || textareaSize.height) return
 
     // 重置高度以获取正确的 scrollHeight
     textarea.style.height = 'auto'
@@ -1005,7 +1080,60 @@ export function ChatInterface({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className={styles.inputArea}>
+        <div
+          ref={inputAreaRef}
+          className={styles.inputArea}
+          style={{
+            width: textareaSize.width ? `${textareaSize.width}px` : undefined,
+            height: textareaSize.height ? `${textareaSize.height}px` : undefined,
+          }}
+        >
+          {/* 拖拽手柄 */}
+          <div className={styles.resizeHandles}>
+            {/* 四个角 */}
+            <div
+              className={clsx(styles.resizeHandle, styles.se)}
+              onMouseDown={(e) => handleResizeStart(e, 'se')}
+              title="向右下拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.sw)}
+              onMouseDown={(e) => handleResizeStart(e, 'sw')}
+              title="向左下拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.ne)}
+              onMouseDown={(e) => handleResizeStart(e, 'ne')}
+              title="向右上拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.nw)}
+              onMouseDown={(e) => handleResizeStart(e, 'nw')}
+              title="向左上拖拽"
+            />
+            {/* 四条边 */}
+            <div
+              className={clsx(styles.resizeHandle, styles.n)}
+              onMouseDown={(e) => handleResizeStart(e, 'n')}
+              title="向上拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.s)}
+              onMouseDown={(e) => handleResizeStart(e, 's')}
+              title="向下拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.e)}
+              onMouseDown={(e) => handleResizeStart(e, 'e')}
+              title="向右拖拽"
+            />
+            <div
+              className={clsx(styles.resizeHandle, styles.w)}
+              onMouseDown={(e) => handleResizeStart(e, 'w')}
+              title="向左拖拽"
+            />
+          </div>
+
           {attachments.length > 0 && (
             <div className={styles.attachmentsPreview}>
               {attachments.map((attachment) => (
@@ -1037,16 +1165,18 @@ export function ChatInterface({
             >
               <Paperclip size={20} />
             </button>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder={isDragging ? '松开以上传文件' : placeholder}
-              disabled={disabled}
-              className={styles.textarea}
-              rows={1}
-            />
+            <div className={styles.textareaWrapper}>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInput}
+                onKeyDown={handleKeyDown}
+                placeholder={isDragging ? '松开以上传文件' : placeholder}
+                disabled={disabled}
+                className={styles.textarea}
+                rows={1}
+              />
+            </div>
             <button
               onClick={handleSend}
               disabled={(!input.trim() && attachments.length === 0) || disabled}

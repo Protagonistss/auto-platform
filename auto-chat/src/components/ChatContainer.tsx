@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Plus, Square, Brain, X, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ChatInterface } from './ChatInterface'
@@ -15,8 +15,15 @@ export function ChatContainer({
   conversationId: propConversationId,
   onConversationCreated
 }: ChatContainerProps) {
+  // 从 URL 获取 token 参数
+  const figmaToken = useMemo(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('token')
+  }, [])
+
   const [conversationId, setConversationId] = useState<string | undefined>(propConversationId)
   const [messages, setMessages] = useState<Message[]>([])
+  const [initialInput, setInitialInput] = useState<string | undefined>(undefined)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
@@ -33,45 +40,43 @@ export function ChatContainer({
   // 防止 StrictMode 导致的重复请求
   const isInitializedRef = useRef(false)
 
+  // 防止重复加载 Figma 数据
+  const figmaDataLoadedRef = useRef(false)
+
   // 初始化会话
   useEffect(() => {
     if (isInitializedRef.current) return
     isInitializedRef.current = true
 
     const initConversation = async () => {
-      if (propConversationId) {
-        try {
-          setIsInitializing(true)
-          const detail = await chatApi.getConversation(propConversationId)
-          setMessages(
-            detail.messages.map((msg) => ({
-              id: `${detail.conversation_id}-${msg.timestamp}`,
-              role: msg.role,
-              content: msg.content,
-              timestamp: msg.timestamp,
-            }))
-          )
-        } catch (err) {
-          setError(err instanceof Error ? err.message : '加载会话失败')
-        } finally {
-          setIsInitializing(false)
+      try {
+        setIsInitializing(true)
+
+        // 创建新会话
+        const result = await chatApi.createConversation('新对话')
+        setConversationId(result.conversation_id)
+        onConversationCreatedRef.current?.(result.conversation_id)
+
+        // 如果有 figmaToken，获取 Figma 数据并设置到输入框
+        if (figmaToken && !figmaDataLoadedRef.current) {
+          figmaDataLoadedRef.current = true
+          try {
+            const figmaData = await chatApi.getFigmaPayload(figmaToken)
+            // 将 Figma 数据设置为初始输入值，用代码块包裹
+            setInitialInput(`\`\`\`json\n${JSON.stringify(figmaData.data, null, 2)}\n\`\`\`\n`)
+          } catch (err) {
+            setError(err instanceof Error ? err.message : '加载 Figma 数据失败')
+          }
         }
-      } else {
-        try {
-          setIsInitializing(true)
-          const result = await chatApi.createConversation('新对话')
-          setConversationId(result.conversation_id)
-          onConversationCreatedRef.current?.(result.conversation_id)
-        } catch (err) {
-          setError(err instanceof Error ? err.message : '创建会话失败')
-        } finally {
-          setIsInitializing(false)
-        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '创建会话失败')
+      } finally {
+        setIsInitializing(false)
       }
     }
 
     initConversation()
-  }, [propConversationId])
+  }, [figmaToken])
 
   // 发送消息
   const handleSendMessage = useCallback(
@@ -303,6 +308,7 @@ export function ChatContainer({
         onBuild={handleBuild}
         placeholder="输入消息..."
         disabled={isLoading}
+        initialInput={initialInput}
       />
     </div>
   )

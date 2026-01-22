@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from .config import settings
-from .api import upload, conversations, orm, xml, build
+from .api import upload, conversations, orm, xml, build, figma
 
 # Windows 上设置 ProactorEventLoop 以支持 subprocess
 if platform.system() == 'Windows':
@@ -62,6 +62,7 @@ app.include_router(conversations.router, tags=["对话管理"])
 app.include_router(orm.router, tags=["ORM管理"])
 app.include_router(xml.router, prefix="/xml", tags=["XML管理"])
 app.include_router(build.router, prefix="/build", tags=["构建管理"])
+app.include_router(figma.router, tags=["Figma数据"])
 
 
 @app.get("/", summary="服务信息", tags=["系统"])

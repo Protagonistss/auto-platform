@@ -224,6 +224,11 @@
   padding: 8px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  min-width: 400px;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
 }
 
 .inputContainer.dragging .inputArea {
@@ -240,10 +245,21 @@
 .inputWrapper {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  align-items: stretch;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.textareaWrapper {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .textarea {
+  width: 100%;
   flex: 1;
   padding: 10px 12px;
   border: none;
@@ -254,8 +270,130 @@
   resize: none;
   outline: none;
   min-height: 24px;
-  max-height: 200px;
   color: #1e293b;
+}
+
+/* 拖拽手柄容器（在 inputArea 层级） */
+.inputArea > .resizeHandles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 20px;
+}
+
+.inputArea:hover > .resizeHandles {
+  opacity: 1;
+}
+
+/* 拖拽手柄基础样式 */
+.resizeHandle {
+  position: absolute;
+  pointer-events: auto;
+  background-color: transparent;
+  transition: background-color 0.2s;
+}
+
+.resizeHandle:hover {
+  background-color: rgba(16, 163, 127, 0.15);
+}
+
+/* 四个角 */
+.resizeHandle.nw {
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nw-resize;
+  border-top-left-radius: 20px;
+}
+
+.resizeHandle.ne {
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: ne-resize;
+  border-top-right-radius: 20px;
+}
+
+.resizeHandle.sw {
+  bottom: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: sw-resize;
+  border-bottom-left-radius: 20px;
+}
+
+.resizeHandle.se {
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+  border-bottom-right-radius: 20px;
+  border: 2px solid #cbd5e1;
+  border-top: none;
+  border-left: none;
+  border-bottom-right-radius: 20px;
+}
+
+.resizeHandle.se:hover {
+  border-color: #10a37f;
+  background-color: rgba(16, 163, 127, 0.1);
+}
+
+/* 四条边 */
+.resizeHandle.n {
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 8px;
+  cursor: n-resize;
+}
+
+.resizeHandle.s {
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 8px;
+  cursor: s-resize;
+}
+
+.resizeHandle.e {
+  top: 16px;
+  right: 0;
+  bottom: 16px;
+  width: 8px;
+  cursor: e-resize;
+}
+
+.resizeHandle.w {
+  top: 16px;
+  left: 0;
+  bottom: 16px;
+  width: 8px;
+  cursor: w-resize;
+}
+
+/* 右下角手柄特殊样式（更明显的视觉提示） */
+.resizeHandle.se::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 10px;
+  height: 10px;
+  background: linear-gradient(135deg, transparent 50%, #cbd5e1 50%);
+}
+
+.resizeHandle.se:hover::after {
+  background: linear-gradient(135deg, transparent 50%, #10a37f 50%);
 }
 
 .textarea::placeholder {
@@ -274,6 +412,7 @@
   transition: all 0.2s;
   border: none;
   flex-shrink: 0;
+  align-self: flex-end;
 }
 
 .attachButton {

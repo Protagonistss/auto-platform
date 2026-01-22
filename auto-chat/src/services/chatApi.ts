@@ -726,6 +726,23 @@ class ChatApiClient {
   }
 
   /**
+   * 获取 Figma Payload 数据
+   */
+  async getFigmaPayload(token: string): Promise<{
+    token: string
+    data: Record<string, any>
+    created_at: string
+  }> {
+    const response = await fetch(`${this.baseUrl}/figma/${token}`)
+
+    if (!response.ok) {
+      throw new Error(`获取 Figma 数据失败: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
+
+  /**
    * 流式执行构建命令 (SSE)
    */
   async executeBuildCommandStream(
