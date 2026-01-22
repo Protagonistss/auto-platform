@@ -3,6 +3,8 @@ import { Plus, Square, Brain, X, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { ChatInterface } from './ChatInterface'
 import type { Message, Attachment } from '@/types/chat'
+import { useChat } from '@/hooks/useChat'
+import { useConversation } from '@/hooks/useConversation'
 import { chatApi } from '@/services/chatApi'
 import styles from './ChatContainer.module.css'
 
@@ -11,6 +13,10 @@ interface ChatContainerProps {
   onConversationCreated?: (id: string) => void
 }
 
+/**
+ * 聊天容器组件（重构版）
+ * 使用自定义 Hooks 管理状态和 API 调用
+ */
 export function ChatContainer({
   conversationId: propConversationId,
   onConversationCreated
@@ -21,27 +27,37 @@ export function ChatContainer({
     return params.get('token')
   }, [])
 
-  const [conversationId, setConversationId] = useState<string | undefined>(propConversationId)
-  const [messages, setMessages] = useState<Message[]>([])
+  // 会话管理 Hook
+  const {
+    conversationId,
+    createConversation,
+    setCurrentConversationId,
+    resetConversation
+  } = useConversation()
+
+  // 聊天消息 Hook
+  const {
+    messages,
+    isLoading,
+    error,
+    abortController,
+    sendMessage,
+    cancelRequest,
+    clearMessages,
+    clearError
+  } = useChat(conversationId)
+
   const [initialInput, setInitialInput] = useState<string | undefined>(undefined)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
-  const [abortController, setAbortController] = useState<AbortController | null>(null)
   const [enableThinking, setEnableThinking] = useState(false)
+
+  // 防止重复加载 Figma 数据
+  const figmaDataLoadedRef = useRef(false)
+  const isInitializedRef = useRef(false)
 
   // 使用 ref 存储回调，避免作为依赖项
   const onConversationCreatedRef = useRef(onConversationCreated)
   onConversationCreatedRef.current = onConversationCreated
-
-  // 使用 ref 存储当前消息 ID，避免闭包问题
-  const currentMessageIdRef = useRef<string | null>(null)
-
-  // 防止 StrictMode 导致的重复请求
-  const isInitializedRef = useRef(false)
-
-  // 防止重复加载 Figma 数据
-  const figmaDataLoadedRef = useRef(false)
 
   // 初始化会话
   useEffect(() => {
@@ -53,8 +69,7 @@ export function ChatContainer({
         setIsInitializing(true)
 
         // 创建新会话
-        const result = await chatApi.createConversation('新对话')
-        setConversationId(result.conversation_id)
+        const result = await createConversation('新对话')
         onConversationCreatedRef.current?.(result.conversation_id)
 
         // 如果有 figmaToken，获取 Figma 数据并设置到输入框
@@ -62,194 +77,61 @@ export function ChatContainer({
           figmaDataLoadedRef.current = true
           try {
             const figmaData = await chatApi.getFigmaPayload(figmaToken)
-            // 将 Figma 数据设置为初始输入值，用代码块包裹
             setInitialInput(`\`\`\`json\n${JSON.stringify(figmaData.data, null, 2)}\n\`\`\`\n`)
           } catch (err) {
-            setError(err instanceof Error ? err.message : '加载 Figma 数据失败')
+            // 静默处理 Figma 数据加载错误
+            console.error('加载 Figma 数据失败:', err)
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : '创建会话失败')
+        // 错误已经在 useConversation 中处理
+        console.error('初始化失败:', err)
       } finally {
         setIsInitializing(false)
       }
     }
 
     initConversation()
-  }, [figmaToken])
+  }, [figmaToken, createConversation])
 
-  // 发送消息
+  // 处理消息发送
   const handleSendMessage = useCallback(
     async (content: string, attachments?: Attachment[]) => {
-      if (!conversationId) {
-        setError('会话未初始化')
-        return
-      }
-
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content,
-        timestamp: Date.now(),
-        attachments,
-      }
-      setMessages((prev) => [...prev, userMessage])
-
-      const tempAssistantId = `assistant-temp-${Date.now()}`
-      currentMessageIdRef.current = tempAssistantId
-      const tempAssistantMessage: Message = {
-        id: tempAssistantId,
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        loading: true,
-        statusText: '连接中...',
-      }
-      setMessages((prev) => [...prev, tempAssistantMessage])
-
-      try {
-        setIsLoading(true)
-        setError(null)
-
-        let fileIds: string[] = []
-        if (attachments && attachments.length > 0) {
-          for (const attachment of attachments) {
-            if (attachment.file) {
-              const result = await chatApi.uploadFile(conversationId, attachment.file)
-              fileIds.push(result.file_id)
-            }
-          }
-        }
-
-        const controller = new AbortController()
-        setAbortController(controller)
-
-        await chatApi.sendMessageStream(
-          conversationId,
-          content,
-          fileIds.length > 0 ? fileIds : undefined,
-          {
-            signal: controller.signal,
-            callbacks: {
-              onStart: (data) => {
-                currentMessageIdRef.current = data.message_id
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === tempAssistantId
-                      ? { ...msg, id: data.message_id, statusText: 'AI 思考中...' }
-                      : msg
-                  )
-                )
-              },
-              onChunk: (chunk, thinking) => {
-                const currentId = currentMessageIdRef.current
-                if (!currentId) return
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === currentId
-                      ? thinking
-                        ? {
-                            ...msg,
-                            thinkingContent: (msg.thinkingContent || '') + chunk,
-                            loading: false,
-                          }
-                        : {
-                            ...msg,
-                            content: msg.content + chunk,
-                            loading: false,
-                            statusText: undefined,
-                          }
-                      : msg
-                  )
-                )
-              },
-              onEnd: (data) => {
-                const currentId = currentMessageIdRef.current
-                if (!currentId) return
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === currentId || msg.id === data.message_id
-                      ? {
-                          ...msg,
-                          id: data.message_id,
-                          loading: false,
-                          statusText: undefined,
-                        }
-                      : msg
-                  )
-                )
-              },
-              onError: (error) => {
-                setError(error)
-                const currentId = currentMessageIdRef.current
-                if (!currentId) return
-                setMessages((prev) =>
-                  prev.filter((msg) => msg.id !== currentId)
-                )
-              },
-            },
-          },
-          enableThinking
-        )
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          const currentId = currentMessageIdRef.current
-          if (currentId) {
-            setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
-          }
-        } else {
-          const errorMessage = err instanceof Error ? err.message : '发送消息失败'
-          setError(errorMessage)
-          const currentId = currentMessageIdRef.current
-          if (currentId) {
-            setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
-          }
-        }
-      } finally {
-        setIsLoading(false)
-        setAbortController(null)
-        currentMessageIdRef.current = null
-      }
+      await sendMessage(content, attachments, enableThinking)
     },
-    [conversationId, enableThinking]
+    [sendMessage, enableThinking]
   )
 
+  // 处理取消请求
   const handleCancel = useCallback(() => {
-    if (abortController) {
-      abortController.abort()
-      setAbortController(null)
-      setIsLoading(false)
-    }
-  }, [abortController])
+    cancelRequest()
+  }, [cancelRequest])
 
-  const handleReset = async () => {
-    setMessages([])
-    setError(null)
+  // 处理重置会话
+  const handleReset = useCallback(async () => {
+    clearMessages()
     setIsInitializing(true)
 
     try {
-      const result = await chatApi.createConversation('新对话')
-      setConversationId(result.conversation_id)
+      const result = await resetConversation()
       onConversationCreatedRef.current?.(result.conversation_id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建会话失败')
+      console.error('重置会话失败:', err)
     } finally {
       setIsInitializing(false)
     }
-  }
+  }, [clearMessages, resetConversation])
 
-  const handleBuild = async (xmlContent: string) => {
+  // 处理构建
+  const handleBuild = useCallback(async (xmlContent: string) => {
     try {
-      setError(null)
-      // 使用新的统一 buildXml 方法
       const result = await chatApi.buildXml(xmlContent, { source: 'chat' })
       return result
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '构建失败'
-      setError(errorMessage)
       throw err
     }
-  }
+  }, [])
+
 
   if (isInitializing) {
     return (
@@ -266,7 +148,7 @@ export function ChatContainer({
         <div className={styles.errorBanner}>
           <div className={styles.errorContent}>
             <span>{error}</span>
-            <button onClick={() => setError(null)} className={styles.closeButton}>
+            <button onClick={clearError} className={styles.closeButton}>
               <X size={16} />
             </button>
           </div>
@@ -280,7 +162,7 @@ export function ChatContainer({
             <span>新对话</span>
           </button>
         </div>
-        
+
         <div className={styles.headerRight}>
           <label className={clsx(styles.thinkingToggle, enableThinking && styles.active)}>
             <input
@@ -292,7 +174,7 @@ export function ChatContainer({
             <Brain size={16} />
             <span>思考模式</span>
           </label>
-          
+
           {isLoading && abortController && (
             <button onClick={handleCancel} className={styles.cancelButton}>
               <Square size={14} fill="currentColor" />
