@@ -8,6 +8,7 @@ import type { BuildOperationState, BuildOperationCallbacks } from '@/types/build
  * 处理构建、写入、启动服务、停止服务、导出等操作
  */
 export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
+  const LOG_FLUSH_INTERVAL = 120
   const [state, setState] = useState<BuildOperationState>({
     buildingMessageId: null,
     writtenMessageIds: new Set<string>(),
@@ -145,16 +146,13 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             // 存储日志到 ref
             buildLogsRef.current[messageId].push(line)
 
-            // 清除之前的定时器
-            if (updateIntervalsRef.current[messageId]) {
-              clearTimeout(updateIntervalsRef.current[messageId])
+            // 节流刷新：持续输出也能实时更新
+            if (!updateIntervalsRef.current[messageId]) {
+              updateIntervalsRef.current[messageId] = setTimeout(() => {
+                flushLogsToState(messageId, startTime)
+                delete updateIntervalsRef.current[messageId]
+              }, LOG_FLUSH_INTERVAL)
             }
-
-            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
-            updateIntervalsRef.current[messageId] = setTimeout(() => {
-              flushLogsToState(messageId, startTime)
-              delete updateIntervalsRef.current[messageId]
-            }, 1000)
           },
           onComplete: (success: boolean, message: string) => {
             // 清除定时器并立即更新
@@ -345,13 +343,9 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             }
             buildLogsRef.current[exportResultKey].push(line)
 
-            // 清除之前的定时器
-            if (updateIntervalsRef.current[exportResultKey]) {
-              clearTimeout(updateIntervalsRef.current[exportResultKey])
-            }
-
-            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
-            updateIntervalsRef.current[exportResultKey] = setTimeout(() => {
+            // 节流刷新：持续输出也能实时更新
+            if (!updateIntervalsRef.current[exportResultKey]) {
+              updateIntervalsRef.current[exportResultKey] = setTimeout(() => {
               const logs = buildLogsRef.current[exportResultKey] || []
               const newLogContent = logs.join('\n')
               
@@ -376,7 +370,8 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 }
               })
               delete updateIntervalsRef.current[exportResultKey]
-            }, 1000)
+              }, LOG_FLUSH_INTERVAL)
+            }
           },
           onComplete: (success: boolean, message: string, outputName?: string) => {
             // 清除定时器并立即更新
@@ -561,13 +556,9 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             // 存储日志到 ref
             buildLogsRef.current[messageId].push(line)
 
-            // 清除之前的定时器
-            if (updateIntervalsRef.current[messageId]) {
-              clearTimeout(updateIntervalsRef.current[messageId])
-            }
-
-            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
-            updateIntervalsRef.current[messageId] = setTimeout(() => {
+            // 节流刷新：持续输出也能实时更新
+            if (!updateIntervalsRef.current[messageId]) {
+              updateIntervalsRef.current[messageId] = setTimeout(() => {
               const logs = buildLogsRef.current[messageId]
               if (logs) {
                 const newLogContent = logs.join('\n')
@@ -594,7 +585,8 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 })
               }
               delete updateIntervalsRef.current[messageId]
-            }, 1000)
+              }, LOG_FLUSH_INTERVAL)
+            }
           },
           onComplete: (success: boolean, message: string) => {
             // 清除定时器

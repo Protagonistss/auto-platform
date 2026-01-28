@@ -23,6 +23,8 @@ export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoSc
     const lastScrollHeightRef = useRef(0)
     const detailsRef = useRef<HTMLDetailsElement>(null)
     const isPinnedToBottomRef = useRef(true)
+    const isAutoScrollingRef = useRef(false)
+    const scrollAnimationRef = useRef<number | null>(null)
     const initialExpandedRef = useRef(isExpanded)
 
     // 同步 details 的 open 状态
@@ -40,38 +42,96 @@ export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoSc
       detailsRef.current = element
     }, [])
 
+    const cancelScrollAnimation = useCallback(() => {
+      if (scrollAnimationRef.current !== null) {
+        cancelAnimationFrame(scrollAnimationRef.current)
+        scrollAnimationRef.current = null
+      }
+      isAutoScrollingRef.current = false
+    }, [])
+
+    const startAutoScroll = useCallback(() => {
+      const element = preRef.current
+      if (!element) return
+
+      if (scrollAnimationRef.current !== null) return
+
+      const step = () => {
+        const current = element.scrollTop
+        const target = Math.max(0, element.scrollHeight - element.clientHeight)
+        const delta = target - current
+
+        if (!isPinnedToBottomRef.current) {
+          cancelScrollAnimation()
+          return
+        }
+
+        if (Math.abs(delta) < 1) {
+          element.scrollTop = target
+          cancelScrollAnimation()
+          return
+        }
+
+        const factor = Math.min(1, Math.max(0.25, Math.abs(delta) / 600))
+        isAutoScrollingRef.current = true
+        element.scrollTop = current + delta * factor
+        scrollAnimationRef.current = requestAnimationFrame(step)
+      }
+
+      scrollAnimationRef.current = requestAnimationFrame(step)
+    }, [cancelScrollAnimation])
+
+    const scrollToBottom = useCallback(() => {
+      isPinnedToBottomRef.current = true
+      startAutoScroll()
+      if (preRef.current) {
+        lastScrollHeightRef.current = preRef.current.scrollHeight
+      }
+    }, [startAutoScroll])
+
+    useLayoutEffect(() => {
+      return () => {
+        cancelScrollAnimation()
+      }
+    }, [cancelScrollAnimation])
+
     // 展开时立即滚动到底部
     useLayoutEffect(() => {
-      if (isExpanded && autoScroll && preRef.current) {
-        // 立即滚动到底部
-        preRef.current.scrollTop = preRef.current.scrollHeight
-        lastScrollHeightRef.current = preRef.current.scrollHeight
-        isPinnedToBottomRef.current = true
-      }
-    }, [isExpanded, autoScroll])
+      if (!isExpanded || !preRef.current) return
+      scrollToBottom()
+    }, [isExpanded, scrollToBottom])
 
     // 日志内容变化时自动滚动
     useLayoutEffect(() => {
-      if (!autoScroll || !isExpanded || !preRef.current) return
+      if (!isExpanded || !preRef.current) return
 
       const currentScrollHeight = preRef.current.scrollHeight
+
+      if (autoScroll) {
+        isPinnedToBottomRef.current = true
+        scrollToBottom()
+        lastScrollHeightRef.current = currentScrollHeight
+        return
+      }
 
       // 如果内容增加了，且仍保持在底部，则自动滚动到底部
       if (currentScrollHeight > lastScrollHeightRef.current) {
         if (isPinnedToBottomRef.current) {
-          preRef.current.scrollTop = preRef.current.scrollHeight
+          scrollToBottom()
         }
         lastScrollHeightRef.current = currentScrollHeight
       }
-    }, [autoScroll, isExpanded, buildResult.stdout, buildResult.stderr])
+    }, [isExpanded, buildResult.stdout, buildResult.stderr, scrollToBottom, autoScroll])
 
     const handleScroll = useCallback(() => {
+      if (autoScroll) return
+      if (isAutoScrollingRef.current) return
       const element = preRef.current
       if (!element) return
       const { scrollTop, scrollHeight, clientHeight } = element
       // 用户手动上滑则解除“粘底”，回到底部再恢复
       isPinnedToBottomRef.current = scrollHeight - scrollTop - clientHeight < 50
-    }, [])
+    }, [autoScroll])
 
     const handleToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
       const isOpen = (e.currentTarget as HTMLDetailsElement).open
