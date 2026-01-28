@@ -90,31 +90,51 @@ export function ChatInterface({
   // 渲染消息内容（支持代码块）
   const renderContent = useCallback(
     (content: string, messageId?: string, isThinkingContent?: boolean) => {
-      const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
-      const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
-      let lastIndex = 0
-      let match
-
-      while ((match = codeBlockRegex.exec(content)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push({
-            type: 'text',
-            content: content.slice(lastIndex, match.index)
-          })
-        }
-        parts.push({
-          type: 'code',
-          lang: match[1] || '',
-          content: match[2]
-        })
-        lastIndex = match.index + match[0].length
+      if (isThinkingContent) {
+        return content
       }
+      const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
+      let index = 0
+      let inCode = false
+      let lang = ''
 
-      if (lastIndex < content.length) {
-        parts.push({
-          type: 'text',
-          content: content.slice(lastIndex)
-        })
+      while (index < content.length) {
+        const fenceIndex = content.indexOf('```', index)
+
+        if (fenceIndex === -1) {
+          const tail = content.slice(index)
+          if (inCode) {
+            parts.push({ type: 'code', content: tail, lang })
+          } else if (tail) {
+            parts.push({ type: 'text', content: tail })
+          }
+          break
+        }
+
+        if (!inCode) {
+          if (fenceIndex > index) {
+            parts.push({ type: 'text', content: content.slice(index, fenceIndex) })
+          }
+          const langLineEnd = content.indexOf('\n', fenceIndex + 3)
+          if (langLineEnd === -1) {
+            lang = content.slice(fenceIndex + 3).trim()
+            parts.push({ type: 'code', content: '', lang })
+            break
+          }
+          lang = content.slice(fenceIndex + 3, langLineEnd).trim()
+          index = langLineEnd + 1
+          inCode = true
+          continue
+        }
+
+        const codeContent = content.slice(index, fenceIndex)
+        parts.push({ type: 'code', content: codeContent, lang })
+        inCode = false
+        lang = ''
+        index = fenceIndex + 3
+        if (content[index] === '\n') {
+          index += 1
+        }
       }
 
       if (parts.length === 0) {

@@ -22,6 +22,9 @@
 
 输出为 Nop 平台的 ORM 实体定义（XML 格式），单 entity 片段格式：
 
+**语言要求**：
+- 全部输出（包括思考过程与最终答案）必须使用中文，除非用户明确要求使用其他语言。
+
 ```xml
 <entity className="app.module.EntityName"
         name="app.module.EntityName"

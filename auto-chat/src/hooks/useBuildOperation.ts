@@ -333,7 +333,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
           stderr: '',
           execution_time: 0,
           message: '正在导出...',
-          phase: 'build'
+          phase: 'export'
         }
       }
     }))
@@ -425,7 +425,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 stderr: '',
                 execution_time: 0,
                 message,
-                phase: 'build'
+                phase: 'export'
               })
             }
           },

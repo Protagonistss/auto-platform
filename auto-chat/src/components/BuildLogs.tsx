@@ -155,6 +155,12 @@ export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoSc
               if (buildResult.success === false) return '服务启动失败'
               return '服务启动中...'
             }
+            if (buildResult.phase === 'export') {
+              if (buildResult.message) return buildResult.message
+              if (buildResult.success === true) return '✓ 导出成功'
+              if (buildResult.success === false) return '✗ 导出失败'
+              return '⟳ 导出中...'
+            }
             if (buildResult.success === true) return '✓ 构建成功'
             if (buildResult.success === false) return '✗ 构建失败'
             return '⟳ 构建中...'
@@ -168,7 +174,11 @@ export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoSc
           className={styles.buildDetails}
           onToggle={handleToggle}
         >
-          <summary>{buildResult.phase === 'dev' ? '开发服务器日志' : '构建日志'}</summary>
+          <summary>
+            {buildResult.phase === 'dev' ? '开发服务器日志' :
+             buildResult.phase === 'export' ? '导出日志' :
+             '构建日志'}
+          </summary>
           <pre ref={preRef} className={styles.buildLog} onScroll={handleScroll}>
             {buildResult.stdout || buildResult.stderr}
           </pre>
