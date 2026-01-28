@@ -475,14 +475,17 @@ async def execute_build_stream(request: BuildCommandRequest):
     logger.info(f"命令: {request.command}")
     logger.info(f"工作目录: {cwd}")
     logger.info(f"超时: {request.timeout}秒")
+    import asyncio
 
     async def event_generator():
         """SSE 事件生成器"""
         command_success = True
         error_message = "构建成功"
         exit_code = 0
+        log_count = 0
 
         try:
+            logger.info("开始调用 shell_service.run_command_stream...")
             async for line in shell_service.run_command_stream(
                 command=request.command,
                 cwd=cwd,
@@ -493,9 +496,15 @@ async def execute_build_stream(request: BuildCommandRequest):
                     exit_code = int(line.split("__BUILD_EXIT_CODE:")[1].split("__")[0])
                     command_success = (exit_code == 0)
                     error_message = f"命令执行完成 (退出码: {exit_code})" if command_success else f"命令执行失败 (退出码: {exit_code})"
+                    logger.info(f"收到退出码: {exit_code}")
                 else:
                     # 发送日志行
-                    yield f"data: {json.dumps({'type': 'log', 'line': line}, ensure_ascii=False)}\n\n"
+                    log_count += 1
+                    if log_count % 50 == 0:
+                        logger.info(f"已发送 {log_count} 条 SSE 日志...")
+                    sse_data = f"data: {json.dumps({'type': 'log', 'line': line}, ensure_ascii=False)}\n\n"
+                    yield sse_data
+                    await asyncio.sleep(0) # 让出控制权以便 flushes
 
                 # 检查客户端是否断开（yield 会触发断开检测）
                 # 如果客户端断开，下一次循环时 GeneratorExit 会被触发
@@ -509,8 +518,11 @@ async def execute_build_stream(request: BuildCommandRequest):
 
         except Exception as e:
             # 执行过程中发生异常（如超时）
+            import traceback
             command_success = False
-            error_message = str(e)
+            error_message = str(e) or repr(e)
+            logger.error(f"流式构建异常: {error_message}")
+            logger.error(f"详细堆栈:\n{traceback.format_exc()}")
             # 发送错误事件
             try:
                 yield f"data: {json.dumps({'type': 'complete', 'success': False, 'message': error_message}, ensure_ascii=False)}\n\n"

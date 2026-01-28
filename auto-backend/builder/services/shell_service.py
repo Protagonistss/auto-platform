@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import threading
 import queue
+import shutil
 from pathlib import Path
 from typing import List, Union, Optional, AsyncIterator
 
@@ -24,6 +25,8 @@ class ShellService:
         """
         流式执行 Shell 命令，逐行返回输出
 
+        使用线程 + subprocess.Popen 实现，兼容 Windows 和 uvicorn。
+
         Args:
             command: 命令字符串 (如 'mvn clean') 或列表 (如 ['mvn', 'clean'])
             cwd: 执行命令的工作目录
@@ -31,17 +34,12 @@ class ShellService:
 
         Yields:
             str: 命令的输出行
-
-        Raises:
-            FileNotFoundError: 指定的工作目录不存在
-            RuntimeError: 命令执行失败 (非0退出码)
-            asyncio.TimeoutError: 命令执行超时
         """
-        # 1. 处理命令参数
+        # 1. 处理命令
         if isinstance(command, str):
-            cmd_args = shlex.split(command)
+            command_str = command
         else:
-            cmd_args = command
+            command_str = ' '.join(command)
 
         # 2. 处理工作目录
         if cwd:
@@ -52,137 +50,202 @@ class ShellService:
         else:
             cwd_str = None
 
-        # Windows 上批处理命令需要 shell=True
         is_windows = platform.system() == 'Windows'
-        batch_commands = ['mvn', 'npm', 'gradle', 'yarn', 'pnpm', 'npx']
-        use_shell = is_windows and cmd_args and cmd_args[0] in batch_commands
 
-        logger.info(f"流式执行命令: {' '.join(cmd_args)} | 目录: {cwd_str or '.'} | shell: {use_shell}")
+        logger.info(f"执行命令: {command_str} | 目录: {cwd_str or '.'} | Windows: {is_windows}")
 
         # 使用队列在线程和异步代码之间传递数据
-        output_queue: queue.Queue[str] = queue.Queue()
-        result_queue: queue.Queue[dict] = queue.Queue()
-        stop_event = threading.Event()  # 添加停止事件
-
-        # 在线程中运行命令
-        process_ref = [None]  # 使用列表存储进程引用，以便在闭包中修改
+        output_queue: queue.Queue = queue.Queue()
+        process_holder = [None]  # 用于存储进程引用
 
         def run_in_thread():
+            """在线程中执行命令"""
             try:
-                process = subprocess.Popen(
-                    cmd_args if not use_shell else ' '.join(cmd_args),
-                    cwd=cwd_str,
-                    shell=use_shell,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    bufsize=1  # 行缓冲
-                )
-                process_ref[0] = process  # 保存进程引用
+                # Windows 上解析可执行文件路径，避免使用 shell=True
+                if is_windows:
+                    # 解析命令
+                    parts = shlex.split(command_str, posix=False)
+                    cmd_exe = parts[0]
 
-                # 逐行读取输出
-                for line in iter(process.stdout.readline, ''):
+                    # 查找可执行文件
+                    executable = shutil.which(cmd_exe)
+                    if not executable:
+                        raise FileNotFoundError(f"找不到命令: {cmd_exe}")
+
+                    # 使用可执行文件的完整路径
+                    parts[0] = executable
+
+                    logger.info(f"使用可执行文件: {executable}")
+
+                    # 设置环境变量以禁用 Python 缓冲
+                    env = os.environ.copy()
+                    env['PYTHONUNBUFFERED'] = '1'
+
+                    # 检查是否是 .cmd 或 .bat 文件
+                    is_batch = executable.lower().endswith(('.cmd', '.bat'))
+                    if is_batch:
+                        logger.warning(f"检测到批处理文件 {executable}，可能仍有缓冲问题")
+
+                    # 不使用 shell=True，直接执行
+                    process = subprocess.Popen(
+                        parts,
+                        cwd=cwd_str,
+                        shell=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        bufsize=0,  # 无缓冲
+                        env=env
+                    )
+                else:
+                    cmd_args = shlex.split(command_str)
+                    process = subprocess.Popen(
+                        cmd_args,
+                        cwd=cwd_str,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        bufsize=0,
+                    )
+
+                process_holder[0] = process
+                logger.info(f"进程启动成功，PID: {process.pid}")
+
+                # 添加调试日志
+                read_count = 0
+                last_log_time = 0
+
+                # 逐字节读取并按行输出
+                buffer = b''
+                while True:
+                    # 读取一个字节
+                    byte = process.stdout.read(1)
+                    if not byte:
+                        logger.info(f"stdout.read(1) 返回空，进程可能已结束 (已读取 {read_count} 字节)")
+                        break
+
+                    read_count += 1
+
+                    # 每读取 1000 字节记录一次
+                    if read_count % 1000 == 0:
+                        logger.info(f"已读取 {read_count} 字节...")
+
+                    buffer += byte
+
+                    # 检查是否有完整的行
+                    if byte == b'\n' or byte == b'\r':
+                        if buffer.strip():
+                            line = self._decode_bytes(buffer)
+                            if line:
+                                logger.info(f"收到日志行: {line[:100]}...")
+                                output_queue.put(('line', line))
+                        buffer = b''
+
+                # 处理剩余的缓冲区
+                if buffer.strip():
+                    line = self._decode_bytes(buffer)
                     if line:
-                        output_queue.put(line.rstrip())
+                        output_queue.put(('line', line))
 
                 process.wait()
-
-                result_queue.put({
-                    'returncode': process.returncode,
-                    'success': process.returncode == 0
-                })
+                output_queue.put(('done', process.returncode))
+                logger.info(f"进程结束，退出码: {process.returncode}，共读取 {read_count} 字节")
 
             except Exception as e:
-                logger.error(f"线程中执行命令异常: {str(e)}")
-                result_queue.put({
-                    'returncode': -1,
-                    'success': False,
-                    'error': str(e)
-                })
+                logger.error(f"线程执行异常: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                output_queue.put(('error', str(e)))
 
         # 启动线程
         thread = threading.Thread(target=run_in_thread, daemon=True)
         thread.start()
 
+        import time
+        start_time = time.monotonic()
+
         try:
-            # 从队列中读取输出并 yield
-            start_time = asyncio.get_event_loop().time()
+            while True:
+                # 检查超时
+                if timeout:
+                    elapsed = time.monotonic() - start_time
+                    if elapsed > timeout:
+                        if process_holder[0]:
+                            process_holder[0].kill()
+                        raise TimeoutError(f"命令执行超时 ({timeout}s)")
 
-            while thread.is_alive():
+                # 尝试从队列获取数据
                 try:
-                    line = output_queue.get(timeout=0.1)
-                    yield line
+                    msg_type, data = output_queue.get(timeout=0.1)
 
-                    # 检查超时
-                    if timeout:
-                        elapsed = asyncio.get_event_loop().time() - start_time
-                        if elapsed > timeout:
-                            raise TimeoutError(f"命令执行超时 ({timeout}s)")
-
-                    # 让出控制权，允许事件循环处理其他请求
-                    await asyncio.sleep(0)
+                    if msg_type == 'line':
+                        yield data
+                        await asyncio.sleep(0)  # 让出控制权
+                    elif msg_type == 'done':
+                        # 进程结束
+                        yield f"__BUILD_EXIT_CODE:{data}__"
+                        break
+                    elif msg_type == 'error':
+                        raise RuntimeError(data)
 
                 except queue.Empty:
-                    # 检查超时
-                    if timeout:
-                        elapsed = asyncio.get_event_loop().time() - start_time
-                        if elapsed > timeout:
-                            raise TimeoutError(f"命令执行超时 ({timeout}s)")
-
-                    # 队列为空时，也让出控制权
+                    # 队列为空，检查线程是否还活着
+                    if not thread.is_alive():
+                        # 线程已结束，尝试获取剩余消息
+                        try:
+                            while True:
+                                msg_type, data = output_queue.get_nowait()
+                                if msg_type == 'line':
+                                    yield data
+                                elif msg_type == 'done':
+                                    yield f"__BUILD_EXIT_CODE:{data}__"
+                                elif msg_type == 'error':
+                                    raise RuntimeError(data)
+                        except queue.Empty:
+                            pass
+                        break
                     await asyncio.sleep(0)
-                    continue
-
-            # 获取最终结果
-            result = result_queue.get(timeout=1)
-
-            if not result['success']:
-                # 命令执行失败，但输出已经通过 yield 返回了
-                # 发送一个特殊的退出码行，让调用者知道命令失败
-                returncode = result.get('returncode', -1)
-                logger.warning(f"命令执行失败 (Exit Code: {returncode})，输出已返回")
-                yield f"__BUILD_EXIT_CODE:{returncode}__"
-            else:
-                # 命令成功，发送退出码 0
-                yield f"__BUILD_EXIT_CODE:0__"
-
-            logger.info("流式命令执行完成")
 
         except GeneratorExit:
-            # 客户端断开连接，清理进程
-            logger.warning("客户端断开连接，正在终止进程...")
-            if process_ref[0]:
+            logger.warning("客户端断开连接，终止进程...")
+            if process_holder[0]:
                 try:
-                    process_ref[0].terminate()
-                    # 等待进程结束，最多等待 3 秒
+                    process_holder[0].terminate()
+                    process_holder[0].wait(timeout=3)
+                except:
                     try:
-                        process_ref[0].wait(timeout=3)
+                        process_holder[0].kill()
                     except:
-                        # 如果进程没有终止，强制杀死
-                        logger.warning("进程未能正常终止，强制杀死")
-                        process_ref[0].kill()
-                    logger.info("进程已终止")
-                except Exception as e:
-                    logger.error(f"终止进程时出错: {str(e)}")
+                        pass
             raise
 
-        except TimeoutError as e:
-            # 超时，也要清理进程
-            logger.error(str(e))
-            if process_ref[0]:
-                try:
-                    process_ref[0].kill()
-                    logger.info("进程因超时被杀死")
-                except Exception as e:
-                    logger.error(f"杀死超时进程时出错: {str(e)}")
+        except TimeoutError:
+            logger.error(f"命令执行超时 ({timeout}s)")
             raise
 
         except Exception as e:
+            logger.error(f"流式命令执行异常: {e}")
             import traceback
-            logger.error(f"流式命令执行异常:\n{traceback.format_exc()}")
+            logger.error(traceback.format_exc())
+            if process_holder[0]:
+                try:
+                    process_holder[0].kill()
+                except:
+                    pass
             raise
+
+    def _decode_bytes(self, data: bytes) -> str:
+        """解码字节数据"""
+        data = data.strip()
+        if not data:
+            return ''
+
+        # 尝试不同的编码
+        for encoding in ['utf-8', 'gbk', 'cp936', 'latin-1']:
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+
+        return data.decode('utf-8', errors='replace')
 
     async def run_command(
         self,
@@ -191,22 +254,10 @@ class ShellService:
         timeout: Optional[int] = None
     ) -> str:
         """
-        异步执行 Shell 命令（非流式，等待完成后返回全部输出）
-
-        Args:
-            command: 命令字符串 (如 'mvn clean') 或列表 (如 ['mvn', 'clean'])
-            cwd: 执行命令的工作目录
-            timeout: 超时时间（秒）
-
-        Returns:
-            str: 命令的标准输出 (stdout)
-
-        Raises:
-            FileNotFoundError: 指定的工作目录不存在
-            RuntimeError: 命令执行失败 (非0退出码)
-            asyncio.TimeoutError: 命令执行超时
+        异步执行 Shell 命令（非流式）
         """
         output_lines = []
         async for line in self.run_command_stream(command, cwd, timeout):
-            output_lines.append(line)
+            if not line.startswith("__BUILD_EXIT_CODE:"):
+                output_lines.append(line)
         return '\n'.join(output_lines)

@@ -806,7 +806,10 @@
   font-size: 12px;
   font-family: 'Consolas', 'Monaco', monospace;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
   max-height: 300px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: auto;
+  will-change: scroll-position;
 }

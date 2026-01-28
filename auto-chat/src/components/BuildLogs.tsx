@@ -18,17 +18,48 @@ export interface BuildLogsProps {
 export const BuildLogs = memo(
   ({ messageId, buildResult, isExpanded, onToggle, autoScroll = false }: BuildLogsProps) => {
     const preRef = useRef<HTMLPreElement>(null)
+    const lastScrollHeightRef = useRef(0)
 
     // 自动滚动到底部
     useEffect(() => {
-      if (autoScroll && isExpanded && preRef.current) {
+      if (!isExpanded || !preRef.current) return
+
+      const scrollToBottom = () => {
+        if (preRef.current) {
+          preRef.current.scrollTop = preRef.current.scrollHeight
+        }
+      }
+
+      // 展开时立即滚动到底部
+      if (autoScroll) {
+        // 使用双重requestAnimationFrame确保DOM完全渲染
+        requestAnimationFrame(() => {
+          requestAnimationFrame(scrollToBottom)
+        })
+      }
+    }, [isExpanded])
+
+    // 监听日志内容变化，自动滚动到底部
+    useEffect(() => {
+      if (!autoScroll || !isExpanded || !preRef.current) return
+
+      const currentScrollHeight = preRef.current.scrollHeight
+
+      // 如果滚动高度增加了（有新日志），滚动到底部
+      if (currentScrollHeight > lastScrollHeightRef.current) {
         requestAnimationFrame(() => {
           if (preRef.current) {
-            preRef.current.scrollTop = preRef.current.scrollHeight
+            const { scrollTop, scrollHeight, clientHeight } = preRef.current
+            // 只有在接近底部时才自动滚动（200px以内）
+            if (scrollHeight - scrollTop - clientHeight < 200) {
+              preRef.current.scrollTop = scrollHeight
+            }
           }
         })
       }
-    }, [autoScroll, isExpanded])
+
+      lastScrollHeightRef.current = currentScrollHeight
+    }, [autoScroll, isExpanded, buildResult.stdout])
 
     return (
       <div className={styles.buildResult}>
@@ -46,7 +77,7 @@ export const BuildLogs = memo(
             return '⟳ 构建中...'
           })()}
           <span className={styles.executionTime}>
-            ({buildResult.execution_time.toFixed(2)}s)
+            ({Math.floor(buildResult.execution_time)}s)
           </span>
         </div>
         <details
@@ -63,6 +94,18 @@ export const BuildLogs = memo(
           </pre>
         </details>
       </div>
+    )
+  },
+  // 自定义比较函数：只在关键属性变化时才重渲染
+  (prevProps, nextProps) => {
+    return (
+      prevProps.messageId === nextProps.messageId &&
+      prevProps.buildResult.success === nextProps.buildResult.success &&
+      prevProps.buildResult.stdout === nextProps.buildResult.stdout &&
+      prevProps.buildResult.phase === nextProps.buildResult.phase &&
+      prevProps.isExpanded === nextProps.isExpanded &&
+      prevProps.autoScroll === nextProps.autoScroll &&
+      Math.floor(prevProps.buildResult.execution_time) === Math.floor(nextProps.buildResult.execution_time)
     )
   }
 )

@@ -231,6 +231,7 @@ class ChatApiClient {
             currentEvent = line.substring(7).trim() as SSEEventType
           } else if (line.startsWith('data: ')) {
             currentData = line.substring(6)
+            console.log('Stream chunk received:', currentData.substring(0, 50) + '...')
           } else if (line === '') {
             // 空行表示事件结束
             if (currentData) {
@@ -799,6 +800,7 @@ class ChatApiClient {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.substring(6)
+            console.log('Build stream chunk:', data.substring(0, 50) + '...')
 
             try {
               const event = JSON.parse(data)

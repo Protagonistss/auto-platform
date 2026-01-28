@@ -166,13 +166,32 @@ export const MessageItem = memo(({
   )
 }, (prevProps, nextProps) => {
   // 自定义比较函数：只在关键 props 变化时才重渲染
+  const prevResult = prevProps.buildState.buildResults[prevProps.message.id]
+  const nextResult = nextProps.buildState.buildResults[nextProps.message.id]
+  const messageId = prevProps.message.id
+
+  // 检查写入和构建状态是否变化
+  const prevWritten = prevProps.buildState.writtenMessageIds.has(messageId)
+  const nextWritten = nextProps.buildState.writtenMessageIds.has(messageId)
+  const prevBuilt = prevProps.buildState.builtMessageIds.has(messageId)
+  const nextBuilt = nextProps.buildState.builtMessageIds.has(messageId)
+
+  // 如果 renderContent 变化，必须重新渲染
+  if (prevProps.renderContent !== nextProps.renderContent) {
+    return false
+  }
+
+  // 构建日志内容需要实时更新，所以不比较stdout
+  // 只比较关键状态变化
   return (
     prevProps.message.id === nextProps.message.id &&
     prevProps.message.content === nextProps.message.content &&
     prevProps.message.loading === nextProps.message.loading &&
     prevProps.thinkingExpanded === nextProps.thinkingExpanded &&
-    prevProps.buildState.buildResults[prevProps.message.id]?.success === nextProps.buildState.buildResults[nextProps.message.id]?.success &&
-    prevProps.buildState.buildingMessageId === nextProps.buildState.buildingMessageId
+    prevResult?.success === nextResult?.success &&
+    prevResult?.phase === nextResult?.phase &&
+    prevWritten === nextWritten &&
+    prevBuilt === nextBuilt
   )
 })
 

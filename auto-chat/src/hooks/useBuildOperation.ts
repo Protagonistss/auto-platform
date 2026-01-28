@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { chatApi } from '@/services/chatApi'
 import type { BuildCommandResponse } from '@/services/chatApi'
 import type { BuildOperationState, BuildOperationCallbacks } from '@/types/build'
@@ -19,6 +19,10 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
   })
 
   const devServerAbortControllersRef = useRef<Record<string, AbortController>>({})
+  // 使用 ref 存储实时日志，减少状态更新频率
+  const buildLogsRef = useRef<Record<string, string[]>>({})
+  // 定时更新状态
+  const updateIntervalsRef = useRef<Record<string, NodeJS.Timeout>>({})
 
   /**
    * 更新状态的辅助函数
@@ -26,6 +30,39 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
   const updateState = useCallback((updater: (prev: BuildOperationState) => BuildOperationState) => {
     setState(updater)
   }, [])
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      Object.values(updateIntervalsRef.current).forEach(clearTimeout)
+    }
+  }, [])
+
+  // 批量更新日志状态的辅助函数
+  const flushLogsToState = useCallback((messageId: string, startTime: number) => {
+    const logs = buildLogsRef.current[messageId]
+    if (!logs) return
+
+    updateState((prev) => {
+      const currentResult = prev.buildResults[messageId]
+      return {
+        ...prev,
+        buildResults: {
+          ...prev.buildResults,
+          [messageId]: {
+            success: null,
+            command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
+            exit_code: null,
+            stdout: logs.join('\n'),
+            stderr: '',
+            execution_time: (Date.now() - startTime) / 1000,
+            message: 'Maven 构建中...',
+            phase: 'build'
+          }
+        }
+      }
+    })
+  }, [updateState])
 
   /**
    * 切换构建日志展开状态
@@ -50,17 +87,17 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
     updateState((prev) => ({ ...prev, buildingMessageId: messageId }))
 
     try {
-      await chatApi.buildXml(xmlContent, { source: 'chat' })
+      const result = await chatApi.buildXml(xmlContent, { source: 'chat' })
       updateState((prev) => ({
         ...prev,
+        buildingMessageId: null,
         writtenMessageIds: new Set(prev.writtenMessageIds).add(messageId)
       }))
       callbacks?.onWriteComplete?.(messageId)
     } catch (error) {
       console.error('写入失败:', error)
-      throw error
-    } finally {
       updateState((prev) => ({ ...prev, buildingMessageId: null }))
+      throw error
     }
   }, [callbacks, updateState])
 
@@ -76,43 +113,48 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
     }))
 
     const startTime = Date.now()
-    const logs: string[] = []
+    // 初始化日志存储
+    buildLogsRef.current[messageId] = []
 
     try {
       await chatApi.executeBuildCommandStream(
         {
-          command: 'mvn clean install -DskipTests',
+          command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
           command_type: 'maven',
           timeout: 600
         },
         {
           onLog: (line: string) => {
-            logs.push(line)
-            updateState((prev) => ({
-              ...prev,
-              buildResults: {
-                ...prev.buildResults,
-                [messageId]: {
-                  success: null,
-                  command: 'mvn clean install -DskipTests',
-                  exit_code: null,
-                  stdout: logs.join('\n'),
-                  stderr: '',
-                  execution_time: (Date.now() - startTime) / 1000,
-                  message: 'Maven 构建中...',
-                  phase: 'build'
-                }
-              }
-            }))
+            // 存储日志到 ref
+            buildLogsRef.current[messageId].push(line)
+
+            // 清除之前的定时器
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+            }
+
+            // 设置新的定时器，500ms 后批量更新
+            updateIntervalsRef.current[messageId] = setTimeout(() => {
+              flushLogsToState(messageId, startTime)
+              delete updateIntervalsRef.current[messageId]
+            }, 500)
           },
           onComplete: (success: boolean, message: string) => {
+            // 清除定时器并立即更新
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+              delete updateIntervalsRef.current[messageId]
+            }
+
             const executionTime = (Date.now() - startTime) / 1000
+            const logs = buildLogsRef.current[messageId] || []
+
             updateState((prev) => {
               const newResults = {
                 ...prev.buildResults,
                 [messageId]: {
                   success,
-                  command: 'mvn clean install -DskipTests',
+                  command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
                   exit_code: success ? 0 : -1,
                   stdout: logs.join('\n'),
                   stderr: '',
@@ -134,45 +176,72 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 return { ...prev, buildResults: newResults }
               }
             })
+
+            // 清理 ref
+            delete buildLogsRef.current[messageId]
           },
           onError: (error: string) => {
-            updateState((prev) => ({
-              ...prev,
-              buildResults: {
-                ...prev.buildResults,
-                [messageId]: {
-                  success: false,
-                  command: 'mvn clean install -DskipTests',
-                  exit_code: -1,
-                  stdout: logs.join('\n'),
-                  stderr: error,
-                  execution_time: (Date.now() - startTime) / 1000,
-                  message: `构建错误: ${error}`,
-                  phase: 'build'
+            // 清除定时器并立即更新
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+              delete updateIntervalsRef.current[messageId]
+            }
+
+            const logs = buildLogsRef.current[messageId] || []
+            updateState((prev) => {
+              return {
+                ...prev,
+                buildResults: {
+                  ...prev.buildResults,
+                  [messageId]: {
+                    success: false,
+                    command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
+                    exit_code: -1,
+                    stdout: logs.join('\n'),
+                    stderr: error,
+                    execution_time: (Date.now() - startTime) / 1000,
+                    message: `构建错误: ${error}`,
+                    phase: 'build'
+                  }
                 }
               }
-            }))
+            })
+
+            // 清理 ref
+            delete buildLogsRef.current[messageId]
           }
         }
       )
     } catch (error) {
+      // 清除定时器并立即更新
+      if (updateIntervalsRef.current[messageId]) {
+        clearTimeout(updateIntervalsRef.current[messageId])
+        delete updateIntervalsRef.current[messageId]
+      }
+
       const executionTime = (Date.now() - startTime) / 1000
-      updateState((prev) => ({
-        ...prev,
-        buildResults: {
-          ...prev.buildResults,
-          [messageId]: {
-            success: false,
-            command: 'mvn clean install -DskipTests',
-            exit_code: -1,
-            stdout: logs.join('\n'),
-            stderr: error instanceof Error ? error.message : String(error),
-            execution_time: executionTime,
-            message: `构建失败: ${error instanceof Error ? error.message : String(error)}`,
-            phase: 'build'
+      const logs = buildLogsRef.current[messageId] || []
+      updateState((prev) => {
+        return {
+          ...prev,
+          buildResults: {
+            ...prev.buildResults,
+            [messageId]: {
+              success: false,
+              command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
+              exit_code: -1,
+              stdout: logs.join('\n'),
+              stderr: error instanceof Error ? error.message : String(error),
+              execution_time: executionTime,
+              message: `构建失败: ${error instanceof Error ? error.message : String(error)}`,
+              phase: 'build'
+            }
           }
         }
-      }))
+      })
+
+      // 清理 ref
+      delete buildLogsRef.current[messageId]
       throw error
     } finally {
       updateState((prev) => ({ ...prev, buildingMessageId: null }))
@@ -253,21 +322,43 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
         outputName,
         {
           onLog: (line: string) => {
-            updateState((prev) => {
-              const current = prev.buildResults[exportResultKey]
-              return {
-                ...prev,
-                buildResults: {
-                  ...prev.buildResults,
-                  [exportResultKey]: {
-                    ...current,
-                    stdout: current.stdout + line + '\n'
+            // 存储日志到 ref
+            if (!buildLogsRef.current[exportResultKey]) {
+              buildLogsRef.current[exportResultKey] = []
+            }
+            buildLogsRef.current[exportResultKey].push(line)
+
+            // 清除之前的定时器
+            if (updateIntervalsRef.current[exportResultKey]) {
+              clearTimeout(updateIntervalsRef.current[exportResultKey])
+            }
+
+            // 设置新的定时器，500ms 后批量更新
+            updateIntervalsRef.current[exportResultKey] = setTimeout(() => {
+              const logs = buildLogsRef.current[exportResultKey] || []
+              updateState((prev) => {
+                const current = prev.buildResults[exportResultKey]
+                return {
+                  ...prev,
+                  buildResults: {
+                    ...prev.buildResults,
+                    [exportResultKey]: {
+                      ...current,
+                      stdout: logs.join('\n')
+                    }
                   }
                 }
-              }
-            })
+              })
+              delete updateIntervalsRef.current[exportResultKey]
+            }, 500)
           },
           onComplete: (success: boolean, message: string, outputName?: string) => {
+            // 清除定时器并立即更新
+            if (updateIntervalsRef.current[exportResultKey]) {
+              clearTimeout(updateIntervalsRef.current[exportResultKey])
+              delete updateIntervalsRef.current[exportResultKey]
+            }
+
             updateState((prev) => {
               const current = prev.buildResults[exportResultKey]
               const nextExporting = new Set(prev.exportingMessageIds)
@@ -286,6 +377,9 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 }
               }
             })
+
+            // 清理 ref
+            delete buildLogsRef.current[exportResultKey]
 
             if (success && outputName) {
               const downloadUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/build/export/excel/download?filename=${outputName}`
@@ -309,6 +403,12 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             }
           },
           onError: (error: string) => {
+            // 清除定时器并立即更新
+            if (updateIntervalsRef.current[exportResultKey]) {
+              clearTimeout(updateIntervalsRef.current[exportResultKey])
+              delete updateIntervalsRef.current[exportResultKey]
+            }
+
             updateState((prev) => {
               const current = prev.buildResults[exportResultKey]
               const nextExporting = new Set(prev.exportingMessageIds)
@@ -327,10 +427,19 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
                 }
               }
             })
+
+            // 清理 ref
+            delete buildLogsRef.current[exportResultKey]
           }
         }
       )
     } catch (error) {
+      // 清除定时器并立即更新
+      if (updateIntervalsRef.current[exportResultKey]) {
+        clearTimeout(updateIntervalsRef.current[exportResultKey])
+        delete updateIntervalsRef.current[exportResultKey]
+      }
+
       updateState((prev) => {
         const current = prev.buildResults[exportResultKey]
         const nextExporting = new Set(prev.exportingMessageIds)
@@ -349,6 +458,9 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
           }
         }
       })
+
+      // 清理 ref
+      delete buildLogsRef.current[exportResultKey]
     }
   }, [callbacks, updateState])
 
@@ -372,12 +484,11 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
     }))
 
     const devStartTime = Date.now()
-    const devLogs: string[] = []
     const controller = new AbortController()
     devServerAbortControllersRef.current[messageId] = controller
 
     try {
-      devLogs.push('--- 清理 8080 端口 ---')
+      const initialLogs = ['--- 清理 8080 端口 ---']
       try {
         const portKillResult = await chatApi.executeBuildCommand({
           command: 'ziro kill -f 8080',
@@ -385,13 +496,16 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
           timeout: 10
         })
         if (portKillResult.stdout) {
-          devLogs.push(portKillResult.stdout)
+          initialLogs.push(portKillResult.stdout)
         }
       } catch (portError) {
-        devLogs.push(`端口清理异常: ${portError instanceof Error ? portError.message : String(portError)}`)
+        initialLogs.push(`端口清理异常: ${portError instanceof Error ? portError.message : String(portError)}`)
       }
 
-      devLogs.push('端口清理完成，准备启动 Quarkus...')
+      initialLogs.push('端口清理完成，准备启动 Quarkus...')
+
+      // 初始化日志存储
+      buildLogsRef.current[messageId] = initialLogs
 
       updateState((prev) => {
         const current = prev.buildResults[messageId]
@@ -404,63 +518,100 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               success: null,
               message: 'Quarkus 项目启动中...',
               phase: 'dev',
-              stdout: devLogs.join('\n')
+              stdout: initialLogs.join('\n')
             }
           }
         }
       })
 
-      devLogs.push('--- Quarkus 开发服务器 ---')
-
       await chatApi.executeBuildCommandStream(
         {
-          command: 'mvn -pl labor-tracking-app -am io.quarkus:quarkus-maven-plugin:dev',
+          command: 'mvn -B -pl labor-tracking-app -am io.quarkus:quarkus-maven-plugin:dev -Dstyle.color=never --no-transfer-progress',
           command_type: 'maven',
           timeout: 3600
         },
         {
           onLog: (line: string) => {
-            devLogs.push(line)
-            updateState((prev) => {
-              const current = prev.buildResults[messageId]
-              return {
-                ...prev,
-                buildResults: {
-                  ...prev.buildResults,
-                  [messageId]: {
-                    ...current,
-                    stdout: devLogs.join('\n')
+            // 存储日志到 ref
+            buildLogsRef.current[messageId].push(line)
+
+            // 清除之前的定时器
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+            }
+
+            // 设置新的定时器，500ms 后批量更新
+            updateIntervalsRef.current[messageId] = setTimeout(() => {
+              const logs = buildLogsRef.current[messageId]
+              if (logs) {
+                updateState((prev) => {
+                  const current = prev.buildResults[messageId]
+                  return {
+                    ...prev,
+                    buildResults: {
+                      ...prev.buildResults,
+                      [messageId]: {
+                        ...current,
+                        stdout: logs.join('\n')
+                      }
+                    }
                   }
-                }
+                })
               }
-            })
+              delete updateIntervalsRef.current[messageId]
+            }, 500)
           },
           onComplete: (success: boolean, message: string) => {
+            // 清除定时器
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+              delete updateIntervalsRef.current[messageId]
+            }
             delete devServerAbortControllersRef.current[messageId]
+
             updateState((prev) => {
               const next = new Set(prev.devServerRunning)
               next.delete(messageId)
               return { ...prev, devServerRunning: next }
             })
+
+            // 清理 ref
+            delete buildLogsRef.current[messageId]
           },
           onError: (error: string) => {
+            // 清除定时器
+            if (updateIntervalsRef.current[messageId]) {
+              clearTimeout(updateIntervalsRef.current[messageId])
+              delete updateIntervalsRef.current[messageId]
+            }
             delete devServerAbortControllersRef.current[messageId]
+
             updateState((prev) => {
               const next = new Set(prev.devServerRunning)
               next.delete(messageId)
               return { ...prev, devServerRunning: next }
             })
+
+            // 清理 ref
+            delete buildLogsRef.current[messageId]
           }
         },
         controller.signal
       )
     } catch (error) {
+      // 清除定时器
+      if (updateIntervalsRef.current[messageId]) {
+        clearTimeout(updateIntervalsRef.current[messageId])
+        delete updateIntervalsRef.current[messageId]
+      }
       delete devServerAbortControllersRef.current[messageId]
       updateState((prev) => {
         const next = new Set(prev.devServerRunning)
         next.delete(messageId)
         return { ...prev, devServerRunning: next }
       })
+      // 清理 ref
+      delete buildLogsRef.current[messageId]
     }
   }, [callbacks, updateState])
 
