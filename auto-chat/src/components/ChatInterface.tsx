@@ -17,6 +17,7 @@ interface ChatInterfaceProps {
   placeholder?: string
   disabled?: boolean
   initialInput?: string
+  autoExpandThinking?: boolean
 }
 
 /**
@@ -29,13 +30,15 @@ export function ChatInterface({
   onBuild,
   placeholder = '输入消息...',
   disabled = false,
-  initialInput
+  initialInput,
+  autoExpandThinking = false
 }: ChatInterfaceProps) {
   // 输入状态
   const [input, setInput] = useState(initialInput || '')
 
   // 思考内容展开状态
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
+  const autoExpandedRef = useRef<Set<string>>(new Set())
 
   // 文件上传 Hook
   const {
@@ -175,6 +178,24 @@ export function ChatInterface({
       }
     }
   }, [initialInput])
+
+  // 自动展开思考内容（仅对新出现的思考块）
+  useEffect(() => {
+    if (!autoExpandThinking) return
+    setExpandedThinking((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const message of messages) {
+        if (message.role !== 'assistant') continue
+        if (!message.thinkingContent) continue
+        if (autoExpandedRef.current.has(message.id)) continue
+        next.add(message.id)
+        autoExpandedRef.current.add(message.id)
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [messages, autoExpandThinking])
 
   return (
     <div className={styles.chatContainer}>

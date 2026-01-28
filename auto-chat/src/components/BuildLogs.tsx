@@ -149,6 +149,12 @@ export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoSc
           )}
         >
           {(() => {
+            if (buildResult.phase === 'dev') {
+              if (buildResult.message) return buildResult.message
+              if (buildResult.success === true) return '服务已启动'
+              if (buildResult.success === false) return '服务启动失败'
+              return '服务启动中...'
+            }
             if (buildResult.success === true) return '✓ 构建成功'
             if (buildResult.success === false) return '✗ 构建失败'
             return '⟳ 构建中...'

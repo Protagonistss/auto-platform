@@ -20,6 +20,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
   })
 
   const devServerAbortControllersRef = useRef<Record<string, AbortController>>({})
+  const devServerStartedRef = useRef<Set<string>>(new Set())
   // 使用 ref 存储实时日志，减少状态更新频率
   const buildLogsRef = useRef<Record<string, string[]>>({})
   // 定时更新状态
@@ -280,21 +281,26 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
         const next = new Set(prev.devServerRunning)
         next.delete(messageId)
         const current = prev.buildResults[messageId]
+        const stopLogLine = '>>> 服务已停止'
+        const nextStdout = current?.stdout ? `${current.stdout}\n${stopLogLine}` : stopLogLine
         return {
           ...prev,
           devServerRunning: next,
+          expandedBuildLogs: new Set(prev.expandedBuildLogs).add(messageId),
           buildResults: current ? {
             ...prev.buildResults,
             [messageId]: {
               ...current,
               success: true,
               message: '服务已停止',
-              phase: 'build'
+              phase: 'dev',
+              stdout: nextStdout
             }
           } : prev.buildResults
         }
       })
 
+      devServerStartedRef.current.delete(messageId)
       callbacks?.onDevServerStop?.(messageId)
     } catch (error) {
       console.error('停止开发服务器失败:', error)
@@ -507,6 +513,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
     const devStartTime = Date.now()
     const controller = new AbortController()
     devServerAbortControllersRef.current[messageId] = controller
+    devServerStartedRef.current.delete(messageId)
 
     try {
       const initialLogs = ['--- 清理 8080 端口 ---']
@@ -556,6 +563,28 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             // 存储日志到 ref
             buildLogsRef.current[messageId].push(line)
 
+            if (!devServerStartedRef.current.has(messageId)) {
+              const isReady = line.includes('Listening on:') || line.includes('started in')
+              if (isReady) {
+                devServerStartedRef.current.add(messageId)
+                updateState((prev) => {
+                  const current = prev.buildResults[messageId]
+                  return {
+                    ...prev,
+                    buildResults: {
+                      ...prev.buildResults,
+                      [messageId]: {
+                        ...current,
+                        success: true,
+                        message: '服务已启动',
+                        phase: 'dev'
+                      }
+                    }
+                  }
+                })
+              }
+            }
+
             // 节流刷新：持续输出也能实时更新
             if (!updateIntervalsRef.current[messageId]) {
               updateIntervalsRef.current[messageId] = setTimeout(() => {
@@ -595,6 +624,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               delete updateIntervalsRef.current[messageId]
             }
             delete devServerAbortControllersRef.current[messageId]
+            devServerStartedRef.current.delete(messageId)
 
             updateState((prev) => {
               const next = new Set(prev.devServerRunning)
@@ -612,6 +642,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               delete updateIntervalsRef.current[messageId]
             }
             delete devServerAbortControllersRef.current[messageId]
+            devServerStartedRef.current.delete(messageId)
 
             updateState((prev) => {
               const next = new Set(prev.devServerRunning)
@@ -632,6 +663,7 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
         delete updateIntervalsRef.current[messageId]
       }
       delete devServerAbortControllersRef.current[messageId]
+      devServerStartedRef.current.delete(messageId)
       updateState((prev) => {
         const next = new Set(prev.devServerRunning)
         next.delete(messageId)

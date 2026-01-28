@@ -191,6 +191,7 @@ export function ChatContainer({
         placeholder="输入消息..."
         disabled={isLoading}
         initialInput={initialInput}
+        autoExpandThinking={enableThinking}
       />
     </div>
   )

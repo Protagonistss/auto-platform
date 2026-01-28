@@ -160,7 +160,9 @@ export const MessageItem = memo(({
   // 1. 基础属性检查
   if (prevProps.message.id !== nextProps.message.id) return false
   if (prevProps.message.content !== nextProps.message.content) return false
+  if (prevProps.message.thinkingContent !== nextProps.message.thinkingContent) return false
   if (prevProps.message.loading !== nextProps.message.loading) return false
+  if (prevProps.message.statusText !== nextProps.message.statusText) return false
   if (prevProps.thinkingExpanded !== nextProps.thinkingExpanded) return false
   if (prevProps.renderContent !== nextProps.renderContent) return false
 
