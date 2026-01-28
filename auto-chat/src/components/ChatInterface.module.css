@@ -726,6 +726,8 @@
   background: #f8f9fa;
   border-radius: 6px;
   font-size: 13px;
+  /* 禁用可能导致闪烁的过渡效果 */
+  transition: none;
 }
 
 /* 构建状态 */
@@ -735,6 +737,8 @@
   gap: 8px;
   font-weight: 500;
   margin-bottom: 8px;
+  /* 禁用过渡效果 */
+  transition: none;
 }
 
 .buildStatus.success {
@@ -747,7 +751,8 @@
 
 .buildStatus.building {
   color: #3b82f6;
-  animation: pulse 1.5s ease-in-out infinite;
+  /* 暂时禁用动画，避免可能的闪烁 */
+  /* animation: pulse 1.5s ease-in-out infinite; */
 }
 
 @keyframes pulse {
@@ -786,11 +791,18 @@
 }
 
 /* 构建详情 */
+.buildDetails {
+  /* 禁用 details 元素的默认动画 */
+  transition: none;
+}
+
 .buildDetails summary {
   cursor: pointer;
   color: #3b82f6;
   user-select: none;
   padding: 4px 0;
+  /* 禁用过渡效果 */
+  transition: none;
 }
 
 .buildDetails summary:hover {
@@ -810,6 +822,12 @@
   max-height: 300px;
   overflow-y: auto;
   overflow-x: hidden;
+  /* 使用 auto 避免滚动动画导致的闪烁 */
   scroll-behavior: auto;
-  will-change: scroll-position;
+  /* 使用 GPU 加速 */
+  transform: translateZ(0);
+  /* 禁用内容变化时的过渡 */
+  transition: none;
+  /* 启用硬件加速 */
+  backface-visibility: hidden;
 }

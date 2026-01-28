@@ -11,7 +11,7 @@ export interface MessageListProps {
   expandedThinking: Set<string>
   renderContent: (content: string, messageId?: string, isThinkingContent?: boolean) => React.ReactNode
   onToggleThinking: (messageId: string) => void
-  onToggleBuildLogs: (messageId: string) => void
+  onToggleBuildLogs: (messageId: string, isOpen?: boolean) => void
   onWriteXml?: (xmlContent: string, messageId: string) => void
   onBuildXml?: (messageId: string) => void
   onStartDev?: (messageId: string) => void

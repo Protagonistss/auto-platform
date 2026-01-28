@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { clsx } from 'clsx'
 import type { BuildCommandResponse } from '@/services/chatApi'
 import styles from './ChatInterface.module.css'
@@ -14,52 +14,69 @@ export interface BuildLogsProps {
 /**
  * 构建日志组件
  * 显示构建结果和日志，支持自动滚动
+ * 
+ * 注意：此组件不使用 memo，因为父组件 MessageItem 已经有 memo 保护
+ * 避免过度优化导致的状态同步问题
  */
-export const BuildLogs = memo(
-  ({ messageId, buildResult, isExpanded, onToggle, autoScroll = false }: BuildLogsProps) => {
+export function BuildLogs({ messageId, buildResult, isExpanded, onToggle, autoScroll = false }: BuildLogsProps) {
     const preRef = useRef<HTMLPreElement>(null)
     const lastScrollHeightRef = useRef(0)
+    const detailsRef = useRef<HTMLDetailsElement>(null)
+    const isPinnedToBottomRef = useRef(true)
+    const initialExpandedRef = useRef(isExpanded)
 
-    // 自动滚动到底部
-    useEffect(() => {
-      if (!isExpanded || !preRef.current) return
-
-      const scrollToBottom = () => {
-        if (preRef.current) {
-          preRef.current.scrollTop = preRef.current.scrollHeight
-        }
-      }
-
-      // 展开时立即滚动到底部
-      if (autoScroll) {
-        // 使用双重requestAnimationFrame确保DOM完全渲染
-        requestAnimationFrame(() => {
-          requestAnimationFrame(scrollToBottom)
-        })
+    // 同步 details 的 open 状态
+    useLayoutEffect(() => {
+      if (detailsRef.current && detailsRef.current.open !== isExpanded) {
+        detailsRef.current.open = isExpanded
       }
     }, [isExpanded])
 
-    // 监听日志内容变化，自动滚动到底部
-    useEffect(() => {
+    // details ref callback，初始化时设置正确的 open 状态
+    const detailsRefCallback = useCallback((element: HTMLDetailsElement | null) => {
+      if (element) {
+        element.open = initialExpandedRef.current
+      }
+      detailsRef.current = element
+    }, [])
+
+    // 展开时立即滚动到底部
+    useLayoutEffect(() => {
+      if (isExpanded && autoScroll && preRef.current) {
+        // 立即滚动到底部
+        preRef.current.scrollTop = preRef.current.scrollHeight
+        lastScrollHeightRef.current = preRef.current.scrollHeight
+        isPinnedToBottomRef.current = true
+      }
+    }, [isExpanded, autoScroll])
+
+    // 日志内容变化时自动滚动
+    useLayoutEffect(() => {
       if (!autoScroll || !isExpanded || !preRef.current) return
 
       const currentScrollHeight = preRef.current.scrollHeight
 
-      // 如果滚动高度增加了（有新日志），滚动到底部
+      // 如果内容增加了，且仍保持在底部，则自动滚动到底部
       if (currentScrollHeight > lastScrollHeightRef.current) {
-        requestAnimationFrame(() => {
-          if (preRef.current) {
-            const { scrollTop, scrollHeight, clientHeight } = preRef.current
-            // 只有在接近底部时才自动滚动（200px以内）
-            if (scrollHeight - scrollTop - clientHeight < 200) {
-              preRef.current.scrollTop = scrollHeight
-            }
-          }
-        })
+        if (isPinnedToBottomRef.current) {
+          preRef.current.scrollTop = preRef.current.scrollHeight
+        }
+        lastScrollHeightRef.current = currentScrollHeight
       }
+    }, [autoScroll, isExpanded, buildResult.stdout, buildResult.stderr])
 
-      lastScrollHeightRef.current = currentScrollHeight
-    }, [autoScroll, isExpanded, buildResult.stdout])
+    const handleScroll = useCallback(() => {
+      const element = preRef.current
+      if (!element) return
+      const { scrollTop, scrollHeight, clientHeight } = element
+      // 用户手动上滑则解除“粘底”，回到底部再恢复
+      isPinnedToBottomRef.current = scrollHeight - scrollTop - clientHeight < 50
+    }, [])
+
+    const handleToggle = (e: React.SyntheticEvent<HTMLDetailsElement>) => {
+      const isOpen = (e.currentTarget as HTMLDetailsElement).open
+      onToggle(isOpen)
+    }
 
     return (
       <div className={styles.buildResult}>
@@ -81,33 +98,15 @@ export const BuildLogs = memo(
           </span>
         </div>
         <details
+          ref={detailsRefCallback}
           className={styles.buildDetails}
-          open={isExpanded}
-          onToggle={(e) => {
-            const isOpen = (e.target as HTMLDetailsElement).open
-            onToggle(isOpen)
-          }}
+          onToggle={handleToggle}
         >
           <summary>{buildResult.phase === 'dev' ? '开发服务器日志' : '构建日志'}</summary>
-          <pre ref={preRef} className={styles.buildLog}>
+          <pre ref={preRef} className={styles.buildLog} onScroll={handleScroll}>
             {buildResult.stdout || buildResult.stderr}
           </pre>
         </details>
       </div>
     )
-  },
-  // 自定义比较函数：只在关键属性变化时才重渲染
-  (prevProps, nextProps) => {
-    return (
-      prevProps.messageId === nextProps.messageId &&
-      prevProps.buildResult.success === nextProps.buildResult.success &&
-      prevProps.buildResult.stdout === nextProps.buildResult.stdout &&
-      prevProps.buildResult.phase === nextProps.buildResult.phase &&
-      prevProps.isExpanded === nextProps.isExpanded &&
-      prevProps.autoScroll === nextProps.autoScroll &&
-      Math.floor(prevProps.buildResult.execution_time) === Math.floor(nextProps.buildResult.execution_time)
-    )
-  }
-)
-
-BuildLogs.displayName = 'BuildLogs'
+}

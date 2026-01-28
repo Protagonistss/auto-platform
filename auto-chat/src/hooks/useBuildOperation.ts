@@ -41,10 +41,22 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
   // 批量更新日志状态的辅助函数
   const flushLogsToState = useCallback((messageId: string, startTime: number) => {
     const logs = buildLogsRef.current[messageId]
-    if (!logs) return
+    if (!logs || logs.length === 0) return
+
+    const newLogContent = logs.join('\n')
+    const newExecutionTime = (Date.now() - startTime) / 1000
 
     updateState((prev) => {
       const currentResult = prev.buildResults[messageId]
+      
+      // 如果日志内容和执行时间都没有实质变化，不更新状态
+      if (currentResult && 
+          currentResult.stdout === newLogContent &&
+          Math.floor(currentResult.execution_time) === Math.floor(newExecutionTime)) {
+        return prev
+      }
+
+      // 创建新的状态对象
       return {
         ...prev,
         buildResults: {
@@ -53,9 +65,9 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
             success: null,
             command: 'mvn -B clean install -DskipTests -Dstyle.color=never --no-transfer-progress',
             exit_code: null,
-            stdout: logs.join('\n'),
+            stdout: newLogContent,
             stderr: '',
-            execution_time: (Date.now() - startTime) / 1000,
+            execution_time: newExecutionTime,
             message: 'Maven 构建中...',
             phase: 'build'
           }
@@ -67,13 +79,18 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
   /**
    * 切换构建日志展开状态
    */
-  const toggleBuildLogs = useCallback((messageId: string) => {
+  const toggleBuildLogs = useCallback((messageId: string, isOpen?: boolean) => {
     setState((prev) => {
       const next = new Set(prev.expandedBuildLogs)
-      if (next.has(messageId)) {
-        next.delete(messageId)
-      } else {
+      const currentlyOpen = next.has(messageId)
+      const shouldOpen = typeof isOpen === 'boolean' ? isOpen : !currentlyOpen
+      if (shouldOpen === currentlyOpen) {
+        return prev
+      }
+      if (shouldOpen) {
         next.add(messageId)
+      } else {
+        next.delete(messageId)
       }
       return { ...prev, expandedBuildLogs: next }
     })
@@ -133,11 +150,11 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               clearTimeout(updateIntervalsRef.current[messageId])
             }
 
-            // 设置新的定时器，500ms 后批量更新
+            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
             updateIntervalsRef.current[messageId] = setTimeout(() => {
               flushLogsToState(messageId, startTime)
               delete updateIntervalsRef.current[messageId]
-            }, 500)
+            }, 1000)
           },
           onComplete: (success: boolean, message: string) => {
             // 清除定时器并立即更新
@@ -333,24 +350,33 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               clearTimeout(updateIntervalsRef.current[exportResultKey])
             }
 
-            // 设置新的定时器，500ms 后批量更新
+            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
             updateIntervalsRef.current[exportResultKey] = setTimeout(() => {
               const logs = buildLogsRef.current[exportResultKey] || []
+              const newLogContent = logs.join('\n')
+              
               updateState((prev) => {
                 const current = prev.buildResults[exportResultKey]
+                
+                // 如果日志内容没有变化，不更新状态
+                if (current && current.stdout === newLogContent) {
+                  return prev
+                }
+                
+                // 创建新的状态对象
                 return {
                   ...prev,
                   buildResults: {
                     ...prev.buildResults,
                     [exportResultKey]: {
                       ...current,
-                      stdout: logs.join('\n')
+                      stdout: newLogContent
                     }
                   }
                 }
               })
               delete updateIntervalsRef.current[exportResultKey]
-            }, 500)
+            }, 1000)
           },
           onComplete: (success: boolean, message: string, outputName?: string) => {
             // 清除定时器并立即更新
@@ -540,26 +566,35 @@ export function useBuildOperation(callbacks?: BuildOperationCallbacks) {
               clearTimeout(updateIntervalsRef.current[messageId])
             }
 
-            // 设置新的定时器，500ms 后批量更新
+            // 设置新的定时器，1000ms 后批量更新（降低更新频率）
             updateIntervalsRef.current[messageId] = setTimeout(() => {
               const logs = buildLogsRef.current[messageId]
               if (logs) {
+                const newLogContent = logs.join('\n')
+                
                 updateState((prev) => {
                   const current = prev.buildResults[messageId]
+                  
+                  // 如果日志内容没有变化，不更新状态
+                  if (current && current.stdout === newLogContent) {
+                    return prev
+                  }
+                  
+                  // 创建新的状态对象
                   return {
                     ...prev,
                     buildResults: {
                       ...prev.buildResults,
                       [messageId]: {
                         ...current,
-                        stdout: logs.join('\n')
+                        stdout: newLogContent
                       }
                     }
                   }
                 })
               }
               delete updateIntervalsRef.current[messageId]
-            }, 500)
+            }, 1000)
           },
           onComplete: (success: boolean, message: string) => {
             // 清除定时器

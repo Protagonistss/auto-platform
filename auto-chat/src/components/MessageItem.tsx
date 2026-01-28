@@ -13,7 +13,7 @@ export interface MessageItemProps {
   buildState: BuildOperationState
   thinkingExpanded: boolean
   onToggleThinking: (messageId: string) => void
-  onToggleBuildLogs: (messageId: string) => void
+  onToggleBuildLogs: (messageId: string, isOpen?: boolean) => void
   renderContent: (content: string, messageId?: string, isThinkingContent?: boolean) => React.ReactNode
   onWriteXml?: (xmlContent: string, messageId: string) => void
   onBuildXml?: (messageId: string) => void
@@ -44,24 +44,13 @@ export const MessageItem = memo(({
     onToggleThinking(message.id)
   }, [message.id, onToggleThinking])
 
-  const handleToggleBuildLogs = useCallback((isOpen: boolean) => {
-    if (isOpen) {
-      onToggleBuildLogs(message.id)
-    } else {
-      onToggleBuildLogs(message.id)
-    }
-  }, [message.id, onToggleBuildLogs])
+  const handleToggleBuildLogs = useCallback((targetMessageId: string, isOpen: boolean) => {
+    onToggleBuildLogs(targetMessageId, isOpen)
+  }, [onToggleBuildLogs])
 
-  // 使用 useMemo 缓存构建结果，避免每次渲染都访问
-  const buildResult = useMemo(
-    () => buildState.buildResults[message.id],
-    [buildState.buildResults, message.id]
-  )
-
-  const exportResult = useMemo(
-    () => buildState.buildResults[`${message.id}_export`],
-    [buildState.buildResults, message.id]
-  )
+  // 直接获取构建结果
+  const buildResult = buildState.buildResults[message.id]
+  const exportResult = buildState.buildResults[`${message.id}_export`]
 
   const isBuildExpanded = useMemo(
     () => buildState.expandedBuildLogs.has(message.id) || buildState.devServerRunning.has(message.id),
@@ -139,7 +128,7 @@ export const MessageItem = memo(({
                 messageId={message.id}
                 buildResult={buildResult}
                 isExpanded={isBuildExpanded}
-                onToggle={handleToggleBuildLogs}
+                onToggle={(isOpen) => handleToggleBuildLogs(message.id, isOpen)}
                 autoScroll={shouldAutoScrollBuild}
               />
             )}
@@ -150,7 +139,7 @@ export const MessageItem = memo(({
                 messageId={`${message.id}_export`}
                 buildResult={exportResult}
                 isExpanded={isExportExpanded}
-                onToggle={handleToggleBuildLogs}
+                onToggle={(isOpen) => handleToggleBuildLogs(`${message.id}_export`, isOpen)}
                 autoScroll={shouldAutoScrollExport}
               />
             )}
@@ -165,34 +154,40 @@ export const MessageItem = memo(({
     </div>
   )
 }, (prevProps, nextProps) => {
-  // 自定义比较函数：只在关键 props 变化时才重渲染
-  const prevResult = prevProps.buildState.buildResults[prevProps.message.id]
-  const nextResult = nextProps.buildState.buildResults[nextProps.message.id]
+  // 自定义比较函数：使用早期返回，提高性能
   const messageId = prevProps.message.id
 
-  // 检查写入和构建状态是否变化
-  const prevWritten = prevProps.buildState.writtenMessageIds.has(messageId)
-  const nextWritten = nextProps.buildState.writtenMessageIds.has(messageId)
-  const prevBuilt = prevProps.buildState.builtMessageIds.has(messageId)
-  const nextBuilt = nextProps.buildState.builtMessageIds.has(messageId)
+  // 1. 基础属性检查
+  if (prevProps.message.id !== nextProps.message.id) return false
+  if (prevProps.message.content !== nextProps.message.content) return false
+  if (prevProps.message.loading !== nextProps.message.loading) return false
+  if (prevProps.thinkingExpanded !== nextProps.thinkingExpanded) return false
+  if (prevProps.renderContent !== nextProps.renderContent) return false
 
-  // 如果 renderContent 变化，必须重新渲染
-  if (prevProps.renderContent !== nextProps.renderContent) {
-    return false
-  }
+  // 2. 构建状态检查
+  if (prevProps.buildState.writtenMessageIds.has(messageId) !== nextProps.buildState.writtenMessageIds.has(messageId)) return false
+  if (prevProps.buildState.builtMessageIds.has(messageId) !== nextProps.buildState.builtMessageIds.has(messageId)) return false
+  if (prevProps.buildState.buildingMessageId === messageId !== (nextProps.buildState.buildingMessageId === messageId)) return false
 
-  // 构建日志内容需要实时更新，所以不比较stdout
-  // 只比较关键状态变化
-  return (
-    prevProps.message.id === nextProps.message.id &&
-    prevProps.message.content === nextProps.message.content &&
-    prevProps.message.loading === nextProps.message.loading &&
-    prevProps.thinkingExpanded === nextProps.thinkingExpanded &&
-    prevResult?.success === nextResult?.success &&
-    prevResult?.phase === nextResult?.phase &&
-    prevWritten === nextWritten &&
-    prevBuilt === nextBuilt
-  )
+  // 3. 展开状态检查
+  if (prevProps.buildState.expandedBuildLogs.has(messageId) !== nextProps.buildState.expandedBuildLogs.has(messageId)) return false
+  if (prevProps.buildState.expandedBuildLogs.has(`${messageId}_export`) !== nextProps.buildState.expandedBuildLogs.has(`${messageId}_export`)) return false
+
+  // 4. 运行状态检查
+  if (prevProps.buildState.devServerRunning.has(messageId) !== nextProps.buildState.devServerRunning.has(messageId)) return false
+  if (prevProps.buildState.exportingMessageIds.has(messageId) !== nextProps.buildState.exportingMessageIds.has(messageId)) return false
+
+  // 5. 构建结果检查（通过引用比较）
+  const prevResult = prevProps.buildState.buildResults[messageId]
+  const nextResult = nextProps.buildState.buildResults[messageId]
+  if (prevResult !== nextResult) return false
+
+  const prevExportResult = prevProps.buildState.buildResults[`${messageId}_export`]
+  const nextExportResult = nextProps.buildState.buildResults[`${messageId}_export`]
+  if (prevExportResult !== nextExportResult) return false
+
+  // 所有检查都通过，不需要重渲染
+  return true
 })
 
 MessageItem.displayName = 'MessageItem'
