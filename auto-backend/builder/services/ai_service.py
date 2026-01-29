@@ -46,18 +46,7 @@ class AIService:
 
     def _load_system_prompt(self, enable_thinking: bool = False) -> str:
         """加载系统提示词模板"""
-        if enable_thinking:
-            # 思考模式：简洁的思考指令
-            return """你是一个AI助手。回答问题时请先思考分析，然后给出答案。
-
-思考部分用<thinking>标签包裹，格式如下：
-<thinking>
-分析问题的关键点和解决思路
-</thinking>
-
-然后给出你的最终答案。"""
-
-        # 非思考模式：加载orm.md文件并注入配置
+        # 加载orm.md文件并注入配置
         prompt_path = Path(__file__).parent.parent / "prompts" / "orm.md"
         with open(prompt_path, "r", encoding="utf-8") as f:
             prompt = f.read()
@@ -70,6 +59,13 @@ class AIService:
 
         for var, value in config_vars.items():
             prompt = prompt.replace(var, value)
+
+        if enable_thinking:
+            prompt += (
+                "\n\n【思考过程要求】\n"
+                "- 思考过程必须完整、连续，不省略、不使用“略/省略/…”等字样。\n"
+                "- 思考过程与最终答案都使用中文，除非用户明确要求使用其他语言。\n"
+            )
 
         return prompt
 
@@ -105,7 +101,7 @@ class AIService:
 
         # 始终加载系统提示词（包含 XML 输出格式要求）
         if use_system_prompt:
-            system_prompt = self._load_system_prompt()
+            system_prompt = self._load_system_prompt(enable_thinking)
             full_messages.append({"role": "system", "content": system_prompt})
 
         full_messages.extend(messages)
@@ -123,7 +119,7 @@ class AIService:
         if enable_thinking:
             request_params["thinking"] = {
                 "type": "enabled",
-                "clear_thinking": True
+                "clear_thinking": False
             }
 
         # 调试日志
